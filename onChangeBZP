@@ -1,0 +1,511 @@
+let th := this;
+let timer := now();
+let timer_text := "Start: 					" + format(now() - timer, "x") + "
+";
+let bzpdata := (select 'Bauzeitenplan/Projektsteuerung' where Projekte = th.Projekte);
+let daysecs := 60 * 60 * 24 * 1000;
+th.(output := "");
+let i := 1;
+function tage_n(a : number,b : number) do
+	if a != null or b != null then
+		round((b - a) / daysecs)
+	else
+		0
+	end
+end;
+function tage_d(a : date,b : date) do
+	if a != null or b != null then
+		round((number(b) - number(a) + 1000 * 60 * 60) / daysecs)
+	else
+		0
+	end
+end;
+function tage_t(a : datetime,b : datetime) do
+	if a != null or b != null then
+		round((number(b) - number(a)) / daysecs)
+	else
+		0
+	end
+end;
+function make12h_n(d : number) do
+	if d != null then
+		number(datetime(year(datetime(d)), month(datetime(d)), day(datetime(d)), 12, 0))
+	else
+		0
+	end
+end;
+function make12h_t(d : datetime) do
+	if d != null then
+		number(datetime(year(d), month(d), day(d), 12, 0))
+	else
+		0
+	end
+end;
+function make12h_d(d : date) do
+	if d != null then
+		number(datetime(year(d), month(d), day(d), 12, 0))
+	else
+		0
+	end
+end;
+function no_WE(d : datetime,d2 : datetime) do
+	if (d != null or d2 != null) and true then
+		switch weekday(d) do
+		case 5:
+			[datetime(number(d) + 2 * daysecs), datetime(number(d2) + 2 * daysecs)]
+		case 6:
+			[datetime(number(d) + 1 * daysecs), datetime(number(d2) + 1 * daysecs)]
+		default:
+			[d, d2]
+		end
+	else
+		[d, d2]
+	end
+end;
+let placeholder := "
+ 
+#######################################################
+		Background Data entschlüsseln
+#######################################################
+
+";
+function getbgdate(allbgdata : text,index : number,hasTime : boolean) do
+	allbgdata := replace(allbgdata, ";", " ;");
+	let bgdata := item(split(allbgdata, ";"), index);
+	bgdata := substr(bgdata, 0, length(bgdata) - 1);
+	if bgdata != "" and cnt(split(allbgdata, ";")) >= index then
+		if hasTime then
+			datetime(number(substr(bgdata, 6, 4)), number(substr(bgdata, 3, 2)), number(substr(bgdata, 0, 2)), number(substr(bgdata, 11, 2)), number(substr(bgdata, 14, 2)))
+		else
+			datetime(number(substr(bgdata, 6, 4)), number(substr(bgdata, 3, 2)), number(substr(bgdata, 0, 2)), 12, 0)
+		end
+	else
+		null
+	end
+end;
+let placeholder := "
+
+###############################################
+		Background Data Setzen
+###############################################
+
+";
+function setbackdata(planS : date,planE : date,sollS : date,sollE : date,counter : number,MplanS : date,recID : number) do
+	let q := record('Bauzeitenplan/Projektsteuerung',recID);
+	if q != null then
+		if counter > 9 then counter := 9 end;
+		if counter < 0 then counter := 0 end;
+		q.(Backgrounddata := format(planS, "DD.MM.YYYY") + ";" + format(planE, "DD.MM.YYYY") + ";" + format(sollS, "DD.MM.YYYY-HH:mm") + ";" + format(sollE, "DD.MM.YYYY") + ";" + text(counter) + ";" + format(MplanS, "DD.MM.YYYY") + ";");
+		true
+	else
+		false
+	end
+end;
+let placeholder := "
+
+#############################################################
+		Checke ob Daten gesetzt werden müssen
+#############################################################
+
+";
+function bed_data(istsoll : boolean,isterl : boolean,Dauer : number,tset_beginn : datetime,tset_ende : datetime,recID : number,forced : boolean) do
+	let t := record('Bauzeitenplan/Projektsteuerung',recID);
+	if t.Nr != null then
+		let bedS := tset_beginn;
+		let bedE := tset_ende;
+		let returnVal2 := true;
+		let bed_erfuellt := true;
+		let end_set := false;
+		let start_set := false;
+		if (cnt(t.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix2) > 0 or forced) and (istsoll or isterl or t.'geplanter Beginn' != null or t.'geplantes Ende' != null) then
+			for bed in t.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix2 do
+				let helper3 := round(number(bed.Beziehungsart) / 5);
+				let helper4 := number(even(number(bed.Beziehungsart))) * 1;
+				for bed_t in bzpdata do
+					if bed_t.Prozessschrittwahl2 = bed.'Prozessschritt_Liste_AUSLÖSER' then
+						if bed_t.'geplanter Beginn' != null and bed_t.'geplantes Ende' != null then
+							if bed_t.'Schritt erledigt' != null and helper3 > 0 or bed_t.'Soll Beginn' != null and helper3 < 1 or not (istsoll or isterl) then
+								if not (istsoll and isterl) and bed_t.'geplanter Beginn' = null and bed_t.'geplantes Ende' = null then
+									void
+								else
+									let beginn_help := make12h_d(bed_t.'geplanter Beginn');
+									let ende_help := make12h_d(bed_t.'geplantes Ende');
+									if istsoll or bed_t.neuplan and bed_t.'Soll Beginn' != null and bed_t.'Soll Ende' != null then
+										beginn_help := number(bed_t.'Soll Beginn');
+										ende_help := make12h_d(bed_t.'Soll Ende')
+									end;
+									if isterl or bed_t.neuplan and bed_t.'Soll Beginn' != null and bed_t.'Schritt erledigt' != null then
+										beginn_help := number(bed_t.'Soll Beginn');
+										ende_help := make12h_d(bed_t.'Schritt erledigt')
+									end;
+									let bedset_beginn := datetime(beginn_help * (1 - helper3) + ende_help * helper3 + bed.Offset * number(t.Relevant) * daysecs + number(Dauer) * daysecs * helper4 * (0 - 1));
+									let bedset_ende := datetime(beginn_help * (1 - helper3) + ende_help * helper3 + bed.Offset * number(t.Relevant) * daysecs + number(Dauer) * daysecs * (1 - helper4));
+									if helper4 < 1 then
+										if tage_t(bedS, bedset_beginn) >= 0 or not start_set then
+											bedS := bedset_beginn;
+											if not end_set then bedE := bedset_ende end
+										end;
+										start_set := true
+									else
+										if tage_t(bedE, bedset_ende) <= 0 or not end_set then
+											bedE := bedset_ende;
+											if not start_set then
+												bedS := bedset_beginn
+											end
+										end;
+										end_set := true
+									end
+								end
+							else
+								bed_erfuellt := false
+							end
+						end
+					end
+				end
+			end
+		end;
+		let no_WE_help := no_WE(bedS, bedE);
+		bedS := first(no_WE_help);
+		bedE := last(no_WE_help);
+		if isterl then
+			if bed_erfuellt then
+				returnVal2 := tage_t(datetime(t.'Soll Ende'), bedE) = 0 and tage_t(datetime(t.'Soll Beginn'), bedS) = 0;
+				t.('Soll Ende' := bedE);
+				t.('Soll Beginn' := bedS)
+			end
+		else
+			if istsoll then
+				if t.'Soll Beginn' = null and t.'Soll Ende' = null then
+					if bed_erfuellt then
+						returnVal2 := tage_t(datetime(t.'Soll Ende'), bedE) = 0 and tage_t(datetime(t.'Soll Beginn'), bedS) = 0;
+						t.('Soll Ende' := bedE);
+						t.('Soll Beginn' := bedS)
+					end
+				else
+					if tage_t(bedS, datetime(t.'Soll Beginn')) > 0 then
+						bedS := t.'Soll Beginn'
+					end;
+					if tage_t(tset_ende, datetime(t.'Soll Ende')) < 0 then
+						bedE := t.'Soll Ende'
+					end;
+					returnVal2 := tage_t(datetime(t.'Soll Ende'), bedE) = 0 and tage_t(datetime(t.'Soll Beginn'), bedS) = 0;
+					t.('Soll Ende' := bedE);
+					t.('Soll Beginn' := tset_beginn)
+				end
+			else
+				returnVal2 := tage_t(datetime(t.'geplantes Ende'), bedE) = 0 and tage_t(datetime(t.'geplanter Beginn'), bedS) = 0;
+				t.('geplantes Ende' := bedE);
+				t.('geplanter Beginn' := bedS)
+			end
+		end;
+		not returnVal2
+	else
+		false
+	end
+end;
+let placeholder := "
+
+##################################################
+		Dauer bestimmen
+##################################################
+
+";
+function autodauer(rec : number,istsoll : boolean) do
+	let t := record('Bauzeitenplan/Projektsteuerung',rec);
+	if t != null then
+		let t_planD := 0;
+		if istsoll then
+			t_planD := tage_n(make12h_t(getbgdate(t.Backgrounddata, 2, true)), make12h_t(getbgdate(t.Backgrounddata, 3, false)));
+			if t_planD = 0 then
+				t_planD := tage_t(datetime(t.'geplanter Beginn'), datetime(t.'geplantes Ende'))
+			end;
+			if t_planD = 0 then
+				t_planD := number(t.Prozessschrittwahl2.'Dauer (Tage)');
+				for dauer in t.Prozessschrittwahl2.Dauern do
+					if contains(concat(dauer.'Ausbau Haus/Keller'), t.Projekte.Ausbaustufe + t.Projekte.Ausbaukeller) then
+						t_planD := dauer.Dauer
+					end
+				end
+			end
+		else
+			t_planD := tage_t(getbgdate(t.Backgrounddata, 0, false), getbgdate(t.Backgrounddata, 1, false));
+			if t_planD = 0 then
+				t_planD := number(t.Prozessschrittwahl2.'Dauer (Tage)');
+				for dauer in t.Prozessschrittwahl2.Dauern do
+					if contains(concat(dauer.'Ausbau Haus/Keller'), t.Projekte.Ausbaustufe + t.Projekte.Ausbaukeller) then
+						t_planD := dauer.Dauer
+					end
+				end
+			end
+		end;
+		t_planD
+	else
+		0
+	end
+end;
+let placeholder := "
+
+##################################################
+		Wiederkehrende Fkt
+##################################################
+
+";
+function changedates(milestone : boolean,recID : number) do
+	let returnVal := "";
+	let rec := record('Bauzeitenplan/Projektsteuerung',recID);
+	if rec.Nr != null then
+		timer_text := timer_text + "Changedates start " + rec.Prozessschrittwahl2.SchrittNr + ":		" + format(now() - timer, "x") + "
+";
+		let mycomment := "Extrahiere Backgrounddata----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+		let counter := number(getbgdate(rec.Backgrounddata, 4, false));
+		let planS := getbgdate(rec.Backgrounddata, 0, false);
+		let planE := getbgdate(rec.Backgrounddata, 1, false);
+		let planD := tage_t(planS, planE);
+		let sollS := getbgdate(rec.Backgrounddata, 2, true);
+		let sollE := getbgdate(rec.Backgrounddata, 3, false);
+		let sollD := tage_t(sollS, sollE);
+		let MplanS := getbgdate(rec.Backgrounddata, 5, false);
+		if rec.'manuell geplant' then
+			MplanS := rec.'geplanter Beginn'
+		else
+			MplanS := null
+		end;
+		let MsollS := getbgdate(rec.Backgrounddata, 6, false);
+		let mycomment := "
+################# check if relevant #################
+";
+		if not rec.Relevant then
+			if rec.'Soll Beginn' != null or rec.'Soll Ende' != null then
+				if autodauer(number(rec.Nr), true) > 0 then
+					bed_data(true, false, 0, datetime(0), datetime(rec.'Soll Ende' + 2000), number(rec.Nr), true);
+					rec.('Schritt erledigt' := rec.'geplantes Ende')
+				end
+			else
+				if autodauer(number(rec.Nr), false) > 0 then
+					bed_data(false, false, 0, datetime(0), datetime(rec.'geplantes Ende' + 2000), number(rec.Nr), true)
+				end
+			end
+		end;
+		let mycomment := "Ist der Schritt nicht abgeschlossen oder ist ein milestone gesetzt?--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+		if rec.'Schritt erledigt' = null or milestone then
+			let mycomment := "Haben sich Daten geändert?--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+			if rec.'geplanter Beginn' != null or rec.'geplantes Ende' != null or rec.'Soll Beginn' != null or rec.'Soll Ende' != null then
+				if rec.'geplanter Beginn' != date(planS) or rec.'geplantes Ende' != date(planE) or rec.'Soll Beginn' != date(sollS) or rec.'Soll Ende' != date(sollE) or milestone then
+					if rec.'Soll Beginn' != null and rec.'Soll Ende' != null and not milestone then
+						if rec.'geplanter Beginn' != date(planS) or rec.'geplantes Ende' != date(planE) then
+							rec.('geplanter Beginn' := date(planS));
+							rec.('geplantes Ende' := date(planE))
+						else
+							let myComment := "Soll wurde geändert------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+							for b in rec.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix do
+								for t in bzpdata do
+									if t.Prozessschrittwahl2 = b.Prozessschritt_Liste_FOLGE then
+										let helper := round(number(b.Beziehungsart) / 5);
+										let helper2 := number(even(number(b.Beziehungsart))) * 1;
+										let t_planD := autodauer(number(t.Nr), true);
+										let tset_beginn := datetime(number(rec.'Soll Beginn') * (1 - helper) + make12h_d(rec.'Soll Ende') * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * helper2 * (0 - 1));
+										let tset_ende := datetime(number(rec.'Soll Beginn') * (1 - helper) + make12h_d(rec.'Soll Ende') * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * (1 - helper2));
+										if t.'Soll Beginn' = null and t.'Soll Ende' = null then
+											let mycomment := "Zusetzendes Soll ist leer -> abfangen ob die Beziehung von Anfang abhängt und dann ggf setzen------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+											if helper < 1 then
+												if bed_data(true, false, t_planD, tset_beginn, tset_ende, number(t.Nr), false) then
+													returnVal := returnVal + text(t.Nr) + ";"
+												end
+											end
+										else
+											let mycomment := "zu setzendes Soll war nicht leer------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+											if bed_data(true, false, t_planD, tset_beginn, tset_ende, number(t.Nr), false) then
+												returnVal := returnVal + text(t.Nr) + ";"
+											end
+										end
+									end
+								end
+							end
+						end
+					else
+						if rec.'geplanter Beginn' != date(planS) or rec.'geplantes Ende' != date(planE) or milestone then
+							let myComment := "Plan wurde geändert------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+							for b in rec.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix do
+								for t in bzpdata do
+									if t.Prozessschrittwahl2 = b.Prozessschritt_Liste_FOLGE then
+										if not t.'manuell geplant' then
+											let helper := round(number(b.Beziehungsart) / 5);
+											let helper2 := number(even(number(b.Beziehungsart))) * 1;
+											let t_planD := autodauer(number(t.Nr), false);
+											let beginn_help := make12h_d(rec.'geplanter Beginn');
+											let ende_help := make12h_d(rec.'geplantes Ende');
+											if rec.neuplan and rec.'Soll Beginn' != null and rec.'Soll Ende' != null then
+												beginn_help := number(rec.'Soll Beginn');
+												ende_help := make12h_d(rec.'Soll Ende')
+											end;
+											if rec.neuplan and rec.'Soll Beginn' != null and rec.'Schritt erledigt' != null then
+												beginn_help := number(rec.'Soll Beginn');
+												ende_help := make12h_d(rec.'Schritt erledigt')
+											end;
+											let tset_beginn := datetime(make12h_n(beginn_help) * (1 - helper) + make12h_n(ende_help) * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * helper2 * (0 - 1));
+											let tset_ende := datetime(make12h_n(beginn_help) * (1 - helper) + make12h_n(ende_help) * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * (1 - helper2));
+											if bed_data(false, false, t_planD, tset_beginn, tset_ende, number(t.Nr), false) then
+												returnVal := returnVal + text(t.Nr) + ";"
+											end
+										end
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		else
+			let mycomment := "Der Schritt ist erledigt, setzte folgendes Soll------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+			for b in rec.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix do
+				for t in bzpdata do
+					if t.Prozessschrittwahl2 = b.Prozessschritt_Liste_FOLGE then
+						let helper := round(number(b.Beziehungsart) / 5);
+						let helper2 := number(even(number(b.Beziehungsart))) * 1;
+						let t_planD := autodauer(number(t.Nr), true);
+						let tset_beginn := datetime(number(rec.'Soll Beginn') * (1 - helper) + make12h_d(rec.'Schritt erledigt') * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * helper2 * (0 - 1));
+						let tset_ende := datetime(number(rec.'Soll Beginn') * (1 - helper) + make12h_d(rec.'Schritt erledigt') * helper + b.Offset * number(t.Relevant) * daysecs + number(t_planD) * daysecs * (1 - helper2));
+						if t.'Soll Beginn' = null and t.'Soll Ende' = null then
+							if bed_data(true, true, t_planD, tset_beginn, tset_ende, number(t.Nr), false) then
+								returnVal := returnVal + number(t.Nr) + ";"
+							end
+						end
+					end
+				end
+			end
+		end;
+		let setback := setbackdata(date(rec.'geplanter Beginn'), date(rec.'geplantes Ende'), date(rec.'Soll Beginn'), date(rec.'Soll Ende'), counter, date(MplanS), number(rec.Nr));
+		let mycomment := "Checke ob es Fehler im BZ-Plan gibt------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+		if rec.'geplanter Beginn' > rec.'geplantes Ende' or rec.'Soll Beginn' > rec.'Soll Ende' then
+			rec.Projekte.('BZ-Fehler' := true)
+		end;
+		returnVal
+	else
+		""
+	end
+end;
+timer_text := timer_text + "After Fkt Def: 				" + format(now() - timer, "x") + "
+";
+let placeholder := "
+
+#################################
+	Checke manuelle Planung
+#################################
+
+";
+let insert_cd := "";
+let mplan_schritt_offset := -0.1;
+if th.'geplanter Beginn' != null and th.'Soll Beginn' = null and th.'Soll Ende' = null then
+	if date(th.'geplanter Beginn') != date(getbgdate(th.Backgrounddata, 0, false)) and date(th.'geplanter Beginn') != date(getbgdate(th.Backgrounddata, 5, false)) then
+		th.('manuell geplant' := true)
+	end;
+	if not th.'manuell geplant' and date(getbgdate(th.Backgrounddata, 5, false)) != null then
+		th.(neuplan := true);
+		mplan_schritt_offset := 0.1;
+		for icd in th.Prozessschrittwahl2.Prozessschritt_Beziehungs_Matrix2.'Prozessschritt_Liste_AUSLÖSER' do
+			for bzp in bzpdata do
+				if bzp.Prozessschrittwahl2 = icd then
+					insert_cd := insert_cd + bzp.Nr + ";"
+				end
+			end
+		end
+	end
+end;
+let placeholder := "
+
+########################################
+	Neuplanung
+########################################
+
+";
+let neu := false;
+let oo := false;
+if th.Prozessschrittwahl2.Milestone and th.Prozessschrittwahl2.SchrittNr != null then
+	for o in th.Projekte.Bauzeitenplan do
+		oo := oo or o.'manuell geplant' and number(o.Prozessschrittwahl2.SchrittNr) > number(th.Prozessschrittwahl2.SchrittNr)
+	end;
+	if not oo then th.(neuplan := true) end
+end;
+if th.neuplan then
+	neu := true;
+	for a in bzpdata do
+		if number(a.Prozessschrittwahl2.SchrittNr) > number(th.Prozessschrittwahl2.SchrittNr) - mplan_schritt_offset then
+			if not a.'manuell geplant' then
+				a.('geplanter Beginn' := null);
+				a.('geplantes Ende' := null);
+				a.(Backgrounddata := null)
+			else
+				insert_cd := insert_cd + a.Nr + ";";
+				a.(Backgrounddata := null)
+			end
+		end
+	end
+end;
+if th.Erledigt and th.'Schritt erledigt' = null then
+	th.('Schritt erledigt' := today())
+end;
+timer_text := timer_text + "Before new steps: 			" + format(now() - timer, "x") + "
+";
+let mycomment := "
+
+##############################################
+Erster Schritt? -> Erzeuge Weitere Schritte.
+############################################
+
+";
+if th.Prozessschrittwahl2.SchrittNr = 1 and th.'Schritt erledigt' != null then
+	let xx := (select Prozessschritt_Liste where number(SchrittNr) > 1 and original);
+	if true then
+		for x in xx do
+			let notfound := true;
+			for y in bzpdata do
+				if y.Prozessschrittwahl2 = x then
+					notfound := false
+				end
+			end;
+			if notfound then
+				let s := (create 'Bauzeitenplan/Projektsteuerung');
+				s.(Projekte := th.Projekte);
+				s.(Prozessschrittwahl2 := x);
+				s.(Relevant := true)
+			end
+		end;
+		neu := true;
+		bzpdata := (select 'Bauzeitenplan/Projektsteuerung' where Projekte = th.Projekte)
+	end
+end;
+timer_text := timer_text + "Before loop:				" + format(now() - timer, "x") + "
+";
+let placeholder := "
+
+#################################
+	Loop
+#################################
+
+";
+let cd := changedates(neu, number(th.Nr));
+cd := cd + insert_cd;
+if true then
+	while (neu or contains(cd, ";")) and i < 300 do 
+		let helper := "";
+		for b in split(cd, ";") do
+			let bb := changedates(neu, number(b));
+			if bb != "" then
+				helper := helper + bb + ";"
+			end
+		end;
+		i := i + 1;
+		cd := helper;
+		if neu and cnt(split(cd, ";")) < 1 then
+			neu := false;
+			cd := text(th.Nr) + ";"
+		end
+	end
+
+end;
+timer_text := timer_text + "After Loop: 				" + format(now() - timer, "x") + "
+";
+let ee := (create Serveroutput);
+ee.(Log := now());
+ee.(Beschreibung := timer_text);
+th.(neuplan := false)
